@@ -8,6 +8,7 @@ export function AuthProvider({ children }) {
   const [supabaseSession, setSupabaseSession] = useState(null);
   const [authenticatedProfile, setAuthenticatedProfile] = useState(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [latestAuthErrorMessage, setLatestAuthErrorMessage] = useState("");
 
   useEffect(() => {
     async function initializeAuthenticationState() {
@@ -38,8 +39,12 @@ export function AuthProvider({ children }) {
           accessToken: supabaseSession.access_token,
         });
         setAuthenticatedProfile(responseData.profile);
-      } catch {
+        setLatestAuthErrorMessage("");
+      } catch (error) {
         setAuthenticatedProfile(null);
+        setLatestAuthErrorMessage(
+          error?.message || "Authentication succeeded, but profile loading failed.",
+        );
       } finally {
         setIsAuthLoading(false);
       }
@@ -53,6 +58,7 @@ export function AuthProvider({ children }) {
       supabaseSession,
       authenticatedProfile,
       isAuthLoading,
+      latestAuthErrorMessage,
       async registerPlayerWithEmail(emailAddress, passwordText, usernameText) {
         return supabaseClient.auth.signUp({
           email: emailAddress,
@@ -70,7 +76,7 @@ export function AuthProvider({ children }) {
         await supabaseClient.auth.signOut();
       },
     }),
-    [supabaseSession, authenticatedProfile, isAuthLoading],
+    [supabaseSession, authenticatedProfile, isAuthLoading, latestAuthErrorMessage],
   );
 
   return <AuthContext.Provider value={authContextValue}>{children}</AuthContext.Provider>;

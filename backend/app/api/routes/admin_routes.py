@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.security import require_admin_or_higher, require_super_admin
-from app.schemas.admin import RoleUpdateResponse, UserRoleUpdatePayload
+from app.schemas.admin import RoleUpdateResponse, UserRoleListItemResponse, UserRoleUpdatePayload
 from app.schemas.auth import AuthenticatedUserProfile
 from app.schemas.common import ApiMessageResponse
 from app.schemas.game import (
@@ -12,7 +12,7 @@ from app.schemas.game import (
     WordReadModel,
     WordUpdatePayload,
 )
-from app.services.admin_service import update_user_role
+from app.services.admin_service import list_user_profiles_for_role_management, update_user_role
 from app.services.game_service import (
     create_category,
     create_word,
@@ -120,6 +120,13 @@ def promote_player_to_admin(
     _: AuthenticatedUserProfile = Depends(require_super_admin),
 ) -> RoleUpdateResponse:
     return RoleUpdateResponse(**update_user_role(role_update_payload.target_user_id, "admin"))
+
+
+@admin_router.get("/roles/users", response_model=list[UserRoleListItemResponse])
+def get_user_profiles_for_role_management(
+    _: AuthenticatedUserProfile = Depends(require_super_admin),
+) -> list[UserRoleListItemResponse]:
+    return [UserRoleListItemResponse(**row) for row in list_user_profiles_for_role_management()]
 
 
 @admin_router.post("/roles/demote-admin", response_model=RoleUpdateResponse)

@@ -1,8 +1,59 @@
 import random
 
 from fastapi import HTTPException, status
+from postgrest.exceptions import APIError
 
 from app.core.supabase_clients import create_service_role_supabase_client
+
+default_category_word_hint_map = {
+    "fruits": [
+        ("apple", "Sweet fruit, usually red or green"),
+        ("banana", "Long yellow fruit"),
+        ("cherry", "Small red fruit"),
+        ("date", "Sweet brown fruit often from Middle East"),
+        ("fig", "Soft fruit with many seeds inside"),
+        ("grape", "Small round fruit, used for wine"),
+    ],
+    "animals": [
+        ("cat", "Small pet that says meow"),
+        ("dog", "Man's best friend"),
+        ("elephant", "Large animal with trunk"),
+        ("giraffe", "Animal with long neck"),
+        ("lion", "King of the jungle"),
+        ("tiger", "Striped big cat"),
+    ],
+    "countries": [
+        ("usa", "Country in North America"),
+        ("canada", "Cold country above USA"),
+        ("brazil", "Famous for football"),
+        ("india", "Second most populous country"),
+        ("china", "Most populous country"),
+        ("australia", "Country with kangaroo"),
+    ],
+}
+
+
+def seed_default_game_data_if_database_is_empty() -> None:
+    supabase_client = create_service_role_supabase_client()
+    existing_category_rows_response = supabase_client.table("categories").select("id").limit(1).execute()
+    existing_category_rows = existing_category_rows_response.data or []
+    if existing_category_rows:
+        return
+
+    for category_name, word_and_hint_pairs in default_category_word_hint_map.items():
+        inserted_category_response = supabase_client.table("categories").insert({"name": category_name}).execute()
+        inserted_category_id = inserted_category_response.data[0]["id"]
+
+        words_to_insert_payload = []
+        for word_text, word_hint in word_and_hint_pairs:
+            words_to_insert_payload.append(
+                {
+                    "category_id": inserted_category_id,
+                    "word": word_text,
+                    "hint": word_hint,
+                }
+            )
+        supabase_client.table("words").insert(words_to_insert_payload).execute()
 
 
 def list_categories() -> list[dict]:
@@ -94,15 +145,43 @@ def get_random_word_for_category(category_id: int) -> dict:
 
 def record_player_win(profile_id: str) -> dict:
     supabase_client = create_service_role_supabase_client()
-    current_score_response = supabase_client.table("scoreboard").select("id, wins").eq("profile_id", profile_id).maybe_single().execute()
+    current_score_response = (
+        supabase_client.table("scoreboard").select("id, wins").eq("profile_id", profile_id).maybe_single().execute()
+    )
+    current_score_data = current_score_response.data if current_score_response else None
 
-    if current_score_response.data is None:
-        created_score_response = supabase_client.table("scoreboard").insert({"profile_id": profile_id, "wins": 1}).execute()
-        return {"profile_id": profile_id, "wins": created_score_response.data[0]["wins"]}
+    if current_score_data is None:
+        try:
+            created_score_response = (
+                supabase_client.table("scoreboard").insert({"profile_id": profile_id, "wins": 1}).execute()
+            )
+            created_score_data = created_score_response.data[0] if created_score_response and created_score_response.data else None
+            if created_score_data is None:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Could not create player score entry.",
+                )
+            return {"profile_id": profile_id, "wins": created_score_data["wins"]}
+        except APIError:
+            # Another request may have inserted simultaneously. Read latest row and continue.
+            concurrent_score_response = (
+                supabase_client.table("scoreboard").select("id, wins").eq("profile_id", profile_id).maybe_single().execute()
+            )
+            current_score_data = concurrent_score_response.data if concurrent_score_response else None
+            if current_score_data is None:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Could not resolve player score after concurrent insert.",
+                )
 
-    existing_wins = current_score_response.data["wins"]
+    existing_wins = current_score_data["wins"]
     updated_wins = existing_wins + 1
-    supabase_client.table("scoreboard").update({"wins": updated_wins}).eq("profile_id", profile_id).execute()
+    updated_score_response = (
+        supabase_client.table("scoreboard").update({"wins": updated_wins}).eq("profile_id", profile_id).execute()
+    )
+    if not updated_score_response or not updated_score_response.data:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not update player score.")
+
     return {"profile_id": profile_id, "wins": updated_wins}
 
 

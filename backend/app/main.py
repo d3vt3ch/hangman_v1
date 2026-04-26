@@ -5,6 +5,7 @@ from app.api.routes.admin_routes import admin_router
 from app.api.routes.auth_routes import auth_router
 from app.api.routes.game_routes import game_router
 from app.core.config import application_settings
+from app.services.game_service import seed_default_game_data_if_database_is_empty
 
 application_instance = FastAPI(title=application_settings.app_name)
 
@@ -20,6 +21,11 @@ application_instance.add_middleware(
 @application_instance.get("/health", tags=["System"])
 def get_health_check() -> dict:
     return {"status": "ok", "environment": application_settings.app_env}
+
+
+@application_instance.on_event("startup")
+def seed_default_hangman_data_at_startup() -> None:
+    seed_default_game_data_if_database_is_empty()
 
 
 application_instance.include_router(auth_router, prefix="/api/v1")

@@ -2,6 +2,7 @@ from typing import Callable
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from postgrest.exceptions import APIError
 
 from app.core.supabase_clients import create_service_role_supabase_client
 from app.schemas.auth import AuthenticatedUserProfile
@@ -24,21 +25,65 @@ def get_authenticated_user_profile(
     access_token = authorization_credentials.credentials
     supabase_client = create_service_role_supabase_client()
 
-    user_response = supabase_client.auth.get_user(access_token)
+    try:
+        user_response = supabase_client.auth.get_user(access_token)
+    except Exception as authentication_error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate authentication token.",
+        ) from authentication_error
+
     authenticated_user = user_response.user
     if authenticated_user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication token.")
 
     profile_response = (
-        supabase_client.table("profiles")
-        .select("id, username, role")
-        .eq("id", authenticated_user.id)
-        .single()
-        .execute()
+        supabase_client.table("profiles").select("id, username, role").eq("id", authenticated_user.id).maybe_single().execute()
     )
     profile_data = profile_response.data
+
     if profile_data is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Profile was not found for this account.")
+        default_username = None
+        if authenticated_user.user_metadata and isinstance(authenticated_user.user_metadata, dict):
+            default_username = authenticated_user.user_metadata.get("username")
+        if not default_username and authenticated_user.email:
+            default_username = authenticated_user.email.split("@")[0]
+        if not default_username:
+            default_username = f"player_{authenticated_user.id[:8]}"
+
+        username_candidates = [
+            default_username,
+            f"{default_username}_{authenticated_user.id[:6]}",
+            f"player_{authenticated_user.id[:8]}",
+        ]
+        for candidate_username in username_candidates:
+            try:
+                supabase_client.table("profiles").insert(
+                    {
+                        "id": authenticated_user.id,
+                        "username": candidate_username,
+                        "role": "player",
+                    }
+                ).execute()
+                break
+            except APIError:
+                # Could be unique username collision or race-condition.
+                continue
+
+        profile_response = (
+            supabase_client.table("profiles")
+            .select("id, username, role")
+            .eq("id", authenticated_user.id)
+            .maybe_single()
+            .execute()
+        )
+        profile_data = profile_response.data
+
+    if profile_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Profile record is missing. Please contact admin.",
+        )
 
     return AuthenticatedUserProfile(
         user_id=profile_data["id"],

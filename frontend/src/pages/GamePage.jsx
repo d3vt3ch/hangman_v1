@@ -12,16 +12,24 @@ export function GamePage() {
   const [guessedLetters, setGuessedLetters] = useState([]);
   const [remainingWrongGuesses, setRemainingWrongGuesses] = useState(4);
   const [inputLetter, setInputLetter] = useState("");
+  const [gameDataLoadingMessage, setGameDataLoadingMessage] = useState("");
 
   useEffect(() => {
     async function loadCategoriesForGame() {
+      setGameDataLoadingMessage("Loading categories...");
       const categories = await sendApiRequest("/api/v1/game/categories");
       setCategoryList(categories);
       if (categories.length > 0) {
         setSelectedCategoryId(String(categories[0].id));
+        setGameDataLoadingMessage("");
+      } else {
+        setGameDataLoadingMessage("No categories found yet. Please refresh in a few seconds.");
       }
     }
-    loadCategoriesForGame().catch(() => setCategoryList([]));
+    loadCategoriesForGame().catch(() => {
+      setCategoryList([]);
+      setGameDataLoadingMessage("Could not load categories. Please check backend logs and refresh.");
+    });
   }, [supabaseSession]);
 
   const displayedWord = useMemo(() => {
@@ -38,6 +46,9 @@ export function GamePage() {
   const hasPlayerLost = remainingWrongGuesses <= 0;
 
   async function startNewGameRound() {
+    if (!selectedCategoryId) {
+      return;
+    }
     const randomWordResponse = await sendApiRequest(`/api/v1/game/random-word?category_id=${selectedCategoryId}`);
     setRandomWordPayload(randomWordResponse);
     setGuessedLetters([]);
@@ -78,6 +89,7 @@ export function GamePage() {
             className="rounded border border-slate-300 p-2"
             value={selectedCategoryId}
             onChange={(event) => setSelectedCategoryId(event.target.value)}
+            disabled={categoryList.length === 0}
           >
             {categoryList.map((categoryRow) => (
               <option key={categoryRow.id} value={categoryRow.id}>
@@ -86,10 +98,16 @@ export function GamePage() {
             ))}
           </select>
         </div>
-        <button type="button" className="rounded bg-slate-900 px-4 py-2 text-white" onClick={startNewGameRound}>
+        <button
+          type="button"
+          className="rounded bg-slate-900 px-4 py-2 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+          onClick={startNewGameRound}
+          disabled={categoryList.length === 0}
+        >
           Start Round
         </button>
       </div>
+      {gameDataLoadingMessage && <p className="text-sm text-amber-700">{gameDataLoadingMessage}</p>}
 
       {randomWordPayload && (
         <>
